@@ -64,7 +64,7 @@ These instructions will get you a copy of the project up and running on your loc
 1.  **Start the Server:**
     Open a terminal, navigate to the project directory, and run the FastAPI server. It will act as the token provider for the client.
     ```bash
-    uvicorn server:app --host 0.0.0.0 --port 8520 --reload
+    uvicorn server:app --host 0.0.0.0 --port 8000 --reload
     ```
     You should see output indicating the server is running.
 
