@@ -10,7 +10,7 @@ import requests
 import queue
 import threading
 
-SERVER_URL = "http://localhost:8520/session"
+SERVER_URL = "http://localhost:8000/session"
 
 # Global queue for audio playback
 playback_queue = queue.Queue()
@@ -170,7 +170,7 @@ async def audio_stream():
     try:
         async with websockets.connect(
             realtime_ws_url,
-            extra_headers=headers,
+            additional_headers=headers,
             ping_interval=20,
             ping_timeout=20
         ) as ws:
