@@ -111,7 +111,7 @@ async def receiver(ws):
             elif msg_type == "response.audio_transcript.delta":
                 print(data.get("delta", ""), end="", flush=True)
             elif msg_type == "input_audio_buffer.speech_started":
-                print("\n🎤 [Speech detected...]", flush=True)
+                print("\n [Speech detected...]", flush=True)
             elif msg_type == "input_audio_buffer.speech_stopped":
                 print(" [Processing...]", flush=True)
             elif msg_type == "error":
@@ -119,9 +119,9 @@ async def receiver(ws):
                 if 'buffer' not in error_msg.lower():
                     print(f"\n❌ Error: {error_msg}")
             elif msg_type == "session.created":
-                print("✅ Session established")
+                print(" Session established")
             elif msg_type == "session.updated":
-                print("✅ Session configured with adjusted VAD")
+                print(" Session configured with adjusted VAD")
             elif msg_type == "response.done":
                 print("\n")
 
@@ -226,7 +226,7 @@ async def audio_stream():
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                 except KeyboardInterrupt:
-                    print("\n\n🛑 Stopping...")
+                    print("\n\n Stopping...")
                 finally:
                     for task in [sender_task, receiver_task]:
                         task.cancel()
@@ -236,9 +236,9 @@ async def audio_stream():
                             pass
 
     except websockets.exceptions.InvalidStatusCode as e:
-        print(f"❌ WebSocket connection failed with status {e.status_code}")
+        print(f" WebSocket connection failed with status {e.status_code}")
     except Exception as e:
-        print(f"❌ WebSocket error: {type(e).__name__}: {e}")
+        print(f" WebSocket error: {type(e).__name__}: {e}")
     finally:
         # Stop playback thread
         playback_queue.put(None)
