@@ -138,7 +138,7 @@ async def audio_stream():
         session_info = resp.json()
         print("✅ Session token received")
     except requests.exceptions.RequestException:
-        print(f"❌ Error connecting to the server at {SERVER_URL}.")
+        print(f" Error connecting to the server at {SERVER_URL}.")
         print("Please make sure the server is running with 'uvicorn server:app --reload'")
         return
     except Exception as e:
