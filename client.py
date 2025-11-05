@@ -109,7 +109,9 @@ async def receiver(ws):
                     audio = np.frombuffer(base64.b64decode(audio_b64), dtype=np.int16)
                     playback_queue.put(audio)
             elif msg_type == "response.audio_transcript.delta":
-                print(data.get("delta", ""), end="", flush=True)
+                transcript_delta = data.get("delta", "")
+                if transcript_delta.strip():
+                    print(f"\n[You]: {transcript_delta}", flush=True)
             elif msg_type == "input_audio_buffer.speech_started":
                 print("\n [Speech detected...]", flush=True)
             elif msg_type == "input_audio_buffer.speech_stopped":
