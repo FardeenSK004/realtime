@@ -12,7 +12,7 @@ load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def record_audio(duration=6, samplerate=44100):
-    print("🎙️ Listening...")
+    print(" Listening...")
     audio = sd.rec(int(duration * samplerate), samplerate=samplerate, channels=1, dtype="int16")
     sd.wait()
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
@@ -63,15 +63,15 @@ def main():
                 print("(No speech detected, retrying...)")
                 continue
 
-            print(f"\n🗣️ You said: {text}")
-            print("🤖 Thinking...")
+            print(f"\n You said: {text}")
+            print("Thinking...")
             reply = chat_with_gpt(text)
             print(f"Assistant: {reply}\n")
             speak_text(reply)
             time.sleep(0.5)
 
     except KeyboardInterrupt:
-        print("\n🛑 Exiting cleanly. Goodbye!")
+        print("\n Exiting cleanly. Goodbye!")
 
 if __name__ == "__main__":
     main()
