@@ -31,123 +31,138 @@ def audio_playback_thread(samplerate):
         stream.close()
 
 async def sender(ws, queue):
-    """Sends audio from the queue to the WebSocket."""
-    is_speaking = False
-    silence_frames = 0
-    # 🌟 INCREASED: Need more silence frames (was 3). 
-    # At 16000Hz, blocksize 1024, 1 frame is 64ms.
-    # 15 frames * 64ms ≈ 960ms (close to server's 800ms)
-    silence_threshold = 15  
-
+    """Sends audio from the queue to the WebSocket with minimal latency."""
+    assistant_is_speaking = False
+    
     try:
-        buffer = []
-        last_commit_time = time.time()
-        # 🌟 DECREASED: Commit more frequently while speaking for better latency.
-        commit_interval = 0.2  
-
         while True:
             try:
-                # Get audio with timeout to allow periodic commits
-                # The timeout is key to processing the periodic commit
-                audio_b64, is_silent = await asyncio.wait_for(queue.get(), timeout=0.05) # Lower timeout
+                # Send audio immediately without buffering
+                audio_b64, is_silent = await asyncio.wait_for(queue.get(), timeout=0.01)
                 
-                # ... (rest of the VAD logic remains the same)
-                if not is_silent:
-                    is_speaking = True
-                    silence_frames = 0
-                    buffer.append(audio_b64)
-                elif is_speaking:
-                    silence_frames += 1
-                    if silence_frames >= silence_threshold:
-                        is_speaking = False
+                # Don't send audio while assistant is speaking (prevent feedback)
+                if not assistant_is_speaking:
+                    await ws.send(json.dumps({
+                        "type": "input_audio_buffer.append",
+                        "audio": audio_b64
+                    }))
 
             except asyncio.TimeoutError:
                 pass
 
-            current_time = time.time()
-            
-            # Commit logic:
-            commit_ready = (current_time - last_commit_time) >= commit_interval
-            commit_due_to_silence = buffer and not is_speaking
-            
-            if buffer and (commit_ready or commit_due_to_silence):
-                # Send the entire buffer of audio chunks
-                for audio_chunk in buffer:
-                    await ws.send(json.dumps({
-                        "type": "input_audio_buffer.append",
-                        "audio": audio_chunk
-                    }))
-                
-                # 📢 The key difference: Only commit if speech has stopped!
-                # Otherwise, just append the data and wait for the next interval/turn.
-                if commit_due_to_silence:
-                    await ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
-                    # Reset is_speaking to ensure we don't commit again until new speech
-                    is_speaking = False 
-                    print(" [Input committed]", flush=True) # Debug/confirmation print
-                
-                buffer = []
-                last_commit_time = current_time
-
     except asyncio.CancelledError:
         pass
     except Exception as e:
-        print(f"❌ Sender error: {e}")
+        print(f"⚠ Sender error: {e}")
 
-async def receiver(ws):
-    """Receives messages from the WebSocket and processes them."""
+async def receiver(ws, sender_control):
+    """Receives messages and handles both user and assistant transcription."""
+    assistant_text_buffer = ""
+    is_assistant_responding = False
+
     try:
         async for msg in ws:
             data = json.loads(msg)
             msg_type = data.get("type")
+            now = time.time()
 
-            if msg_type == "response.text.delta":
-                print(data.get("delta", ""), end="", flush=True)
-            elif msg_type == "response.audio.delta":
+            # Track when assistant starts/stops speaking
+            if msg_type == "response.audio.delta":
+                sender_control['assistant_speaking'] = True
                 audio_b64 = data.get("delta")
                 if audio_b64:
                     audio = np.frombuffer(base64.b64decode(audio_b64), dtype=np.int16)
                     playback_queue.put(audio)
+            
+            elif msg_type == "response.audio.done":
+                sender_control['assistant_speaking'] = False
+
+            # ✅ Assistant text output
+            elif msg_type == "response.text.delta":
+                delta = data.get("delta", "")
+                if delta:
+                    if not is_assistant_responding:
+                        print(f"\n🤖 [Assistant]: ", end="", flush=True)
+                        is_assistant_responding = True
+                    print(f"{delta}", end="", flush=True)
+                    assistant_text_buffer += delta
+            
+            # ✅ Assistant audio transcript
             elif msg_type == "response.audio_transcript.delta":
-                transcript_delta = data.get("delta", "")
-                if transcript_delta.strip():
-                    print(f"\n[You]: {transcript_delta}", flush=True)
+                delta = data.get("delta", "")
+                if delta:
+                    if not is_assistant_responding:
+                        print(f"\n🤖 [Assistant]: ", end="", flush=True)
+                        is_assistant_responding = True
+                    print(f"{delta}", end="", flush=True)
+                    assistant_text_buffer += delta
+            
+            elif msg_type == "response.audio_transcript.done":
+                transcript = data.get("transcript", "").strip()
+                if transcript:
+                    if not is_assistant_responding and not assistant_text_buffer:
+                        print(f"\n🤖 [Assistant]: {transcript}")
+                    # Mark as done
+                    pass
+
+            # ✅ User speech transcription (from File 1)
+            elif msg_type == "conversation.item.input_audio_transcription.completed":
+                transcript = data.get("transcript", "").strip()
+                if transcript:
+                    print(f"\n{'-' * 60}")
+                    print(f"- YOU: {transcript}")
+                    print(f"{'-' * 60}")
+
+            # Debug: Print all message types to see what we're receiving
+
+            # Status events
             elif msg_type == "input_audio_buffer.speech_started":
-                print("\n [Speech detected...]", flush=True)
+                print("\n\n👂 Listening...", flush=True)
+
             elif msg_type == "input_audio_buffer.speech_stopped":
-                print(" [Processing...]", flush=True)
-            elif msg_type == "error":
-                error_msg = data.get('error', {}).get('message', '')
-                if 'buffer' not in error_msg.lower():
-                    print(f"\n❌ Error: {error_msg}")
+                print("⚙️  Processing...", flush=True)
+
             elif msg_type == "session.created":
-                print(" Session established")
+                print("\n" + "=" * 60)
+                print("✅ Session established")
+
             elif msg_type == "session.updated":
-                print(" Session configured with adjusted VAD")
+                print("✅ Transcription enabled")
+                print("=" * 60)
+                print("\n🎙️ Start speaking now...\n")
+
             elif msg_type == "response.done":
-                print("\n")
+                if is_assistant_responding:
+                    print("\n")  # Add spacing after response
+                    is_assistant_responding = False
+                    assistant_text_buffer = ""
+
+            elif msg_type == "error":
+                error_msg = data.get("error", {}).get("message", "")
+                if "buffer" not in error_msg.lower():
+                    print(f"\n❌ Error: {error_msg}")
 
     except asyncio.CancelledError:
         pass
     except Exception as e:
-        print(f"❌ Receiver error: {e}")
+        print(f"⚠ Receiver error: {e}")
+
 
 async def audio_stream():
-    # 1. Fetch ephemeral token just before connecting
+    # Fetch ephemeral token
     try:
         resp = requests.post(SERVER_URL)
         resp.raise_for_status()
         session_info = resp.json()
         print("✅ Session token received")
     except requests.exceptions.RequestException:
-        print(f" Error connecting to the server at {SERVER_URL}.")
+        print(f"❌ Error connecting to the server at {SERVER_URL}.")
         print("Please make sure the server is running with 'uvicorn server:app --reload'")
         return
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         return
 
-    # Extract token
     client_secret_obj = session_info.get('client_secret', {})
     token = client_secret_obj.get('value')
 
@@ -156,7 +171,6 @@ async def audio_stream():
         print("Full response:", json.dumps(session_info, indent=2))
         return
 
-    # Construct WebSocket URL
     realtime_ws_url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -165,7 +179,7 @@ async def audio_stream():
 
     print("🔌 Connecting to WebSocket...")
 
-    samplerate = 24000
+    samplerate = 16000
     playback_thread = threading.Thread(target=audio_playback_thread, args=(samplerate,), daemon=True)
     playback_thread.start()
 
@@ -176,41 +190,53 @@ async def audio_stream():
             ping_interval=20,
             ping_timeout=20
         ) as ws:
-            print("✅ Connected. Listening for audio...")
+            print("✅ Connected. Listening for audio...\n")
 
-            # Configure session with LESS sensitive VAD settings
+            # ✅ Enable input AND output audio transcription with FASTER VAD
             await ws.send(json.dumps({
                 "type": "session.update",
                 "session": {
-                    "instructions": "You are a sweet calm and friendly therapist listening to my converstaions and answering my issues only and only  in English language",
+                    "instructions": "You are a sweet calm and friendly therapist listening to my conversations and answering my issues only and only in English language",
                     "voice": "alloy",
                     "input_audio_format": "pcm16",
                     "output_audio_format": "pcm16",
+                    "input_audio_transcription": {
+                        "model": "whisper-1"
+                    },
                     "turn_detection": {
                         "type": "server_vad",
-                        "threshold": 0.85,           # Even less sensitive (higher = less triggers)
-                        "prefix_padding_ms": 300,
-                        "silence_duration_ms": 800   # Wait a bit longer before ending speech
-                    }
+                        "threshold": 0.5,              # Lower = more sensitive, faster response
+                        "prefix_padding_ms": 200,      # Reduced from 300ms
+                        "silence_duration_ms": 400     # Reduced from 800ms - triggers faster
+                    },
+                    "modalities": ["text", "audio"]
                 }
             }))
 
             loop = asyncio.get_running_loop()
             queue = asyncio.Queue()
+            
+            # Shared control for preventing feedback
+            sender_control = {'assistant_speaking': False}
 
-            # Client-side VAD parameters
-            energy_threshold = 400  # Increased threshold to reduce sensitivity to background noise
+            energy_threshold = 300  # Lower threshold for faster detection
 
             def callback(indata, frames, time_info, status):
-                energy = audioop.rms(indata, 2)  # 2 is for 16-bit audio
+                # Don't process input while assistant is speaking
+                if sender_control['assistant_speaking']:
+                    return
+
+                # Convert audio data to bytes for rms calculation
+                audio_bytes = indata.tobytes()
+                energy = audioop.rms(audio_bytes, 2)
                 is_silent = energy < energy_threshold
 
-                b64 = base64.b64encode(indata.tobytes()).decode("utf-8")
+                b64 = base64.b64encode(audio_bytes).decode("utf-8")
                 loop.call_soon_threadsafe(queue.put_nowait, (b64, is_silent))
 
-            input_samplerate = 16000
-            blocksize = 1024
-            print(f"🎤 Recording at {input_samplerate}Hz. Speak clearly when ready!\n")
+            input_samplerate = 24000  # Match output samplerate for better performance
+            blocksize = 512  # Smaller blocks = lower latency
+            print(f"🎙️ Recording at {input_samplerate}Hz. Speak clearly when ready!\n")
 
             with sd.InputStream(
                 callback=callback,
@@ -220,7 +246,7 @@ async def audio_stream():
                 blocksize=blocksize
             ):
                 sender_task = asyncio.create_task(sender(ws, queue))
-                receiver_task = asyncio.create_task(receiver(ws))
+                receiver_task = asyncio.create_task(receiver(ws, sender_control))
 
                 try:
                     await asyncio.wait(
@@ -228,7 +254,7 @@ async def audio_stream():
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                 except KeyboardInterrupt:
-                    print("\n\n Stopping...")
+                    print("\n\n🛑 Stopping...")
                 finally:
                     for task in [sender_task, receiver_task]:
                         task.cancel()
@@ -238,11 +264,10 @@ async def audio_stream():
                             pass
 
     except websockets.exceptions.InvalidStatusCode as e:
-        print(f" WebSocket connection failed with status {e.status_code}")
+        print(f"❌ WebSocket connection failed with status {e.status_code}")
     except Exception as e:
-        print(f" WebSocket error: {type(e).__name__}: {e}")
+        print(f"⚠ WebSocket error: {type(e).__name__}: {e}")
     finally:
-        # Stop playback thread
         playback_queue.put(None)
         playback_thread.join(timeout=1)
 

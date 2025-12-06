@@ -1,6 +1,10 @@
 #!/bin/bash
 
 # Start the server in the background
+if lsof -ti :8000 > /dev/null; then
+    echo "Killing existing server on port 8000"
+    kill -9 $(lsof -ti :8000)
+fi
 uvicorn server:app --host 0.0.0.0 --port 8000 &
 SERVER_PID=$!
 
