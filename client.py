@@ -1,5 +1,4 @@
 import asyncio
-import audioop
 import websockets
 import json
 import base64
@@ -226,12 +225,17 @@ async def audio_stream():
                 if sender_control['assistant_speaking']:
                     return
 
-                # Convert audio data to bytes for rms calculation
-                audio_bytes = indata.tobytes()
-                energy = audioop.rms(audio_bytes, 2)
+                # Flatten the audio buffer and ensure correct dtype
+                samples = indata[:, 0].astype(np.int16)
+
+                # Compute RMS safely (avoid int16 overflow)
+                energy = np.sqrt(np.mean(samples.astype(np.float32) ** 2))
                 is_silent = energy < energy_threshold
 
+                # Serialize audio to bytes for sending
+                audio_bytes = samples.tobytes()
                 b64 = base64.b64encode(audio_bytes).decode("utf-8")
+
                 loop.call_soon_threadsafe(queue.put_nowait, (b64, is_silent))
 
             input_samplerate = 24000  # Match output samplerate for better performance
